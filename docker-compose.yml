@@ -1,0 +1,191 @@
+#version: '3.8'
+
+services:
+  postgres:
+    image: postgres:13
+    container_name: postgres_db
+    environment:
+      - POSTGRES_USER=airflow
+      - POSTGRES_PASSWORD=airflow
+      - POSTGRES_DB=airflow
+    ports:
+      - "5433:5433"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:latest
+    container_name: redis_broker
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio_storage
+    ports:
+      - "9000:9000"  # API Port
+      - "9001:9001"  # Console Port
+    volumes:
+      - minio-data:/data
+    environment:
+      - MINIO_ROOT_USER=admin
+      - MINIO_ROOT_PASSWORD=password
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+
+  airflow-webserver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: airflow_webserver
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./data:/opt/data
+      - ./spark:/opt/airflow/spark_jobs
+      - ./notebooks:/opt/airflow/notebooks
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@postgres/airflow
+      - AIRFLOW_CONN_SPARK_DEFAULT=spark://spark-master:7077
+      - AIRFLOW_CONN_AWS_DEFAULT=aws://admin:password@?host=http%3A%2F%2Fminio%3A9000
+    command: webserver
+
+  airflow-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: airflow_scheduler
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./data:/opt/data
+      - ./spark:/opt/airflow/spark_jobs
+      - ./notebooks:/opt/airflow/notebooks
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@postgres/airflow
+    command: scheduler
+
+  airflow-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: airflow_worker
+    restart: always
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./data:/opt/data
+      - ./spark:/opt/airflow/spark_jobs
+      - ./notebooks:/opt/airflow/notebooks
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@postgres/airflow
+    command: celery worker
+
+  airflow-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: airflow_init
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+    entrypoint: /bin/bash
+    command: -c "airflow db init && airflow users create --username admin --password admin --firstname Anonymous --lastname User --role Admin --email admin@example.org"
+
+  spark-master:
+    image: bitnami/spark:3
+    container_name: spark_master
+    ports:
+      - "8081:8080"  # Spark Master UI
+      - "7077:7077"  # Spark Master Port
+    volumes:
+      - ./spark:/opt/bitnami/spark/jobs
+      - ./data:/opt/data
+      - ./notebooks:/opt/bitnami/spark/notebooks
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+
+  spark-worker:
+    image: bitnami/spark:3
+    container_name: spark_worker_1
+    depends_on:
+      - spark-master
+    ports:
+      - "8082:8080"
+    volumes:
+      - ./spark:/opt/bitnami/spark/jobs
+      - ./data:/opt/data
+      - ./notebooks:/opt/bitnami/spark/notebooks
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+
+  superset:
+    image: apache/superset:latest
+    container_name: superset_bi
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "8088:8088"
+    environment:
+      - SUPERSET_SECRET_KEY=a_very_secret_key_for_superset
+      - SQLALCHEMY_DATABASE_URI=postgresql+psycopg2://airflow:airflow@postgres/airflow
+    command: >
+      bash -c "superset db upgrade &&
+               superset init &&
+               superset fab create-admin --username admin --password admin --firstname Superset --lastname Admin --email admin@superset.com &&
+               superset set_database_uri -d 'airflow_db' -u 'postgresql+psycopg2://airflow:airflow@postgres/airflow' &&
+               gunicorn --bind 0.0.0.0:8088 'superset.app:create_app()'"
+
+volumes:
+  postgres-data:
+  minio-data:

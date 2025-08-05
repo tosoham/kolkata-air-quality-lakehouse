@@ -1,0 +1,7 @@
+apache-airflow-providers-apache-spark
+boto3
+delta-spark
+pandas
+requests
+scikit-learn
+# tensorflow
