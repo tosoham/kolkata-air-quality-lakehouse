@@ -2,14 +2,14 @@
 
 services:
   postgres:
-    image: postgres:13
+    image: postgres:latest
     container_name: postgres_db
     environment:
       - POSTGRES_USER=airflow
       - POSTGRES_PASSWORD=airflow
       - POSTGRES_DB=airflow
     ports:
-      - "5433:5433"
+      - "5433:5432"  # Fixed port mapping
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -17,6 +17,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - lakehouse_net
 
   redis:
     image: redis:latest
@@ -28,6 +30,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - lakehouse_net
 
   minio:
     image: minio/minio:latest
@@ -46,75 +50,8 @@ services:
       interval: 5s
       timeout: 2s
       retries: 5
-
-  airflow-webserver:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: airflow_webserver
-    restart: always
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./data:/opt/data
-      - ./spark:/opt/airflow/spark_jobs
-      - ./notebooks:/opt/airflow/notebooks
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
-      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
-      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@postgres/airflow
-      - AIRFLOW_CONN_SPARK_DEFAULT=spark://spark-master:7077
-      - AIRFLOW_CONN_AWS_DEFAULT=aws://admin:password@?host=http%3A%2F%2Fminio%3A9000
-    command: webserver
-
-  airflow-scheduler:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: airflow_scheduler
-    restart: always
-    depends_on:
-      postgres:
-        condition: service_healthy
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./data:/opt/data
-      - ./spark:/opt/airflow/spark_jobs
-      - ./notebooks:/opt/airflow/notebooks
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
-      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
-      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@postgres/airflow
-    command: scheduler
-
-  airflow-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: airflow_worker
-    restart: always
-    depends_on:
-      redis:
-        condition: service_healthy
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./data:/opt/data
-      - ./spark:/opt/airflow/spark_jobs
-      - ./notebooks:/opt/airflow/notebooks
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
-      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
-      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@postgres/airflow
-    command: celery worker
+    networks:
+      - lakehouse_net
 
   airflow-init:
     build:
@@ -127,37 +64,145 @@ services:
     environment:
       - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/dags
+      - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=True
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__CORE__AUTH_MANAGER=airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
     entrypoint: /bin/bash
-    command: -c "airflow db init && airflow users create --username admin --password admin --firstname Anonymous --lastname User --role Admin --email admin@example.org"
+    command: -c "airflow db migrate && \
+                airflow users create \
+                  --username tosoham \
+                  --password admin \
+                  --firstname Soham \
+                  --lastname Das \
+                  --role Admin \
+                  --email todrsoham@gmail.com"
+    networks:
+      - lakehouse_net
+
+  airflow-webserver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: airflow_webserver
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully  
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./data:/opt/data
+      - ./spark:/opt/airflow/spark_jobs
+      - ./notebooks:/opt/airflow/notebooks
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/dags
+      - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=True
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__AUTH_MANAGER=airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+      #- AIRFLOW__CORE__AUTH_MANAGER=airflow.auth.managers.simple.SimpleAuthManager
+      - AIRFLOW_CONN_SPARK_DEFAULT=spark://spark-master:7077
+      - AIRFLOW_CONN_AWS_DEFAULT=aws://admin:password@?host=http%3A%2F%2Fminio%3A9000
+      - AIRFLOW__AUTH_MANAGERS__SIMPLE__ALLOWED_USERS=tosoham:admin,admin:admin
+      - AIRFLOW_CONN_AWS_DEFAULT=aws://admin:password@/?endpoint_url=http%3A%2F%2Fminio%3A9000
+    command: api-server  
+    networks:
+      - lakehouse_net
+
+  airflow-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: airflow_scheduler
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./data:/opt/data
+      - ./spark:/opt/airflow/spark_jobs
+      - ./notebooks:/opt/airflow/notebooks
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/dags
+      - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=True
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@postgres/airflow
+      - AIRFLOW_CONN_AWS_DEFAULT=aws://admin:password@/?endpoint_url=http%3A%2F%2Fminio%3A9000
+    command: scheduler
+    networks:
+      - lakehouse_net
+
+  airflow-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: airflow_worker
+    restart: always
+    depends_on:
+      redis:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./data:/opt/data
+      - ./spark:/opt/airflow/spark_jobs
+      - ./notebooks:/opt/airflow/notebooks
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@postgres/airflow
+      - AIRFLOW_CONN_AWS_DEFAULT=aws://admin:password@/?endpoint_url=http%3A%2F%2Fminio%3A9000
+    command: celery worker
+    networks:
+      - lakehouse_net
 
   spark-master:
-    image: bitnami/spark:3
+    image: bitnami/spark:latest
     container_name: spark_master
     ports:
       - "8081:8080"  # Spark Master UI
       - "7077:7077"  # Spark Master Port
     volumes:
-      - ./spark:/opt/bitnami/spark/jobs
+      - ./spark:/opt/spark/jobs
       - ./data:/opt/data
-      - ./notebooks:/opt/bitnami/spark/notebooks
+      - ./notebooks:/opt/spark/notebooks
     environment:
       - SPARK_MODE=master
       - SPARK_RPC_AUTHENTICATION_ENABLED=no
       - SPARK_RPC_ENCRYPTION_ENABLED=no
       - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
       - SPARK_SSL_ENABLED=no
+    networks:
+      - lakehouse_net
 
   spark-worker:
-    image: bitnami/spark:3
+    image: bitnami/spark:latest
     container_name: spark_worker_1
     depends_on:
       - spark-master
     ports:
       - "8082:8080"
     volumes:
-      - ./spark:/opt/bitnami/spark/jobs
+      - ./spark:/opt/spark/jobs
       - ./data:/opt/data
-      - ./notebooks:/opt/bitnami/spark/notebooks
+      - ./notebooks:/opt/spark/notebooks
     environment:
       - SPARK_MODE=worker
       - SPARK_MASTER_URL=spark://spark-master:7077
@@ -167,6 +212,8 @@ services:
       - SPARK_RPC_ENCRYPTION_ENABLED=no
       - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
       - SPARK_SSL_ENABLED=no
+    networks:
+      - lakehouse_net
 
   superset:
     image: apache/superset:latest
@@ -185,7 +232,13 @@ services:
                superset fab create-admin --username admin --password admin --firstname Superset --lastname Admin --email admin@superset.com &&
                superset set_database_uri -d 'airflow_db' -u 'postgresql+psycopg2://airflow:airflow@postgres/airflow' &&
                gunicorn --bind 0.0.0.0:8088 'superset.app:create_app()'"
+    networks:
+      - lakehouse_net
 
 volumes:
   postgres-data:
   minio-data:
+
+networks:
+  lakehouse_net:
+    driver: bridge
