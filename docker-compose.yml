@@ -113,7 +113,7 @@ services:
       - AIRFLOW_CONN_SPARK_DEFAULT=spark://spark-master:7077
       - AIRFLOW_CONN_AWS_DEFAULT=aws://admin:password@?host=http%3A%2F%2Fminio%3A9000
       - AIRFLOW__AUTH_MANAGERS__SIMPLE__ALLOWED_USERS=tosoham:admin,admin:admin
-      - AIRFLOW_CONN_AWS_DEFAULT=aws://admin:password@/?endpoint_url=http%3A%2F%2Fminio%3A9000
+      - AIRFLOW__SECRETS__BACKENDS=airflow.secrets.environment_variables.EnvironmentVariablesBackend,airflow.secrets.metastore.MetastoreBackend
     command: api-server  
     networks:
       - lakehouse_net
@@ -143,6 +143,7 @@ services:
       - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
       - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@postgres/airflow
       - AIRFLOW_CONN_AWS_DEFAULT=aws://admin:password@/?endpoint_url=http%3A%2F%2Fminio%3A9000
+      - AIRFLOW__SECRETS__BACKENDS=airflow.secrets.environment_variables.EnvironmentVariablesBackend,airflow.secrets.metastore.MetastoreBackend
     command: scheduler
     networks:
       - lakehouse_net
@@ -169,9 +170,13 @@ services:
       - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
       - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@postgres/airflow
       - AIRFLOW_CONN_AWS_DEFAULT=aws://admin:password@/?endpoint_url=http%3A%2F%2Fminio%3A9000
+      - AIRFLOW__WEBSERVER__BASE_URL=http://airflow-webserver:8080
+      - AIRFLOW__SECRETS__BACKENDS=airflow.secrets.environment_variables.EnvironmentVariablesBackend,airflow.secrets.metastore.MetastoreBackend
     command: celery worker
     networks:
       - lakehouse_net
+    mem_limit: 4g
+    mem_reservation: 2g
 
   spark-master:
     image: bitnami/spark:latest

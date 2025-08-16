@@ -37,37 +37,13 @@ def ingest_local_to_bronze_pipeline() -> None:
     @task
     def upload_local_files_to_minio() -> None:
         """
-        Scans the local data directory and uploads each file to the MinIO bronze bucket.
+        A simple test task to check the worker's stability.
         """
-        print(f"Scanning files in {LOCAL_DATA_DIR}")
-        s3_hook = S3Hook(aws_conn_id=MINIO_CONNECTION_ID)
-
-        try:
-            files_to_upload = [f for f in os.listdir(LOCAL_DATA_DIR) if os.path.isfile(os.path.join(LOCAL_DATA_DIR, f))]
-        except FileNotFoundError:
-            print(f"Directory not found at {LOCAL_DATA_DIR}. Make sure the volume is mounted correctly.")
-            return
-        
-        if files_to_upload is None:
-            print(f"Directory is empty nothing to upload!!")
-            return
-        
-        print(f"Files Scanned Succesfully in {LOCAL_DATA_DIR}")
-        print("---------------Starting Ingestion---------------")
-
-        for filename in files_to_upload:
-            filepath = os.path.join(LOCAL_DATA_DIR, filename)
-            minio_key = filename
-
-            s3_hook.load_file(
-                filename=filepath,
-                key=minio_key,
-                bucket_name=BRONZE_BUCKET,
-                replace=True,
-                #encrypt=True,
-            )
-            print(f"Successfully uploaded {filename}.")
-
+        import time
+        print("Hello from the worker! Task is starting.")
+        time.sleep(30) # Run for 30 seconds
+        print("Task finished successfully.")
+    
     upload_local_files_to_minio()
 
 ingest_local_to_bronze_pipeline()
