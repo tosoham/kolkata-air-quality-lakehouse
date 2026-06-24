@@ -1,9 +1,6 @@
 apache-airflow-providers-apache-spark
-apache-airflow-task-sdk
+apache-airflow-providers-amazon
+apache-airflow-providers-fab
 boto3
-delta-spark
 pandas
 requests
-scikit-learn
-apache-airflow-providers-amazon
-# tensorflow

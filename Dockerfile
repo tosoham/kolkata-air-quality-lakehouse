@@ -9,14 +9,12 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-
 ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
-
 
 USER airflow
 
-COPY ./requirements.txt /
-RUN python -m pip install --upgrade pip && \ 
-    pip install --no-cache-dir -r /requirements.txt
+# pyspark is a 317 MB sdist — needs a long timeout; separate layer so it caches independently.
+RUN pip install --no-cache-dir --timeout 600 --retries 10 pyspark==3.5.3
 
-# COPY ./dags /opt/airflow/dags
+COPY ./requirements.txt /
+RUN pip install --no-cache-dir --timeout 180 --retries 5 -r /requirements.txt
