@@ -5,3 +5,6 @@ __pycache__/
 node_modules/
 .qodo
 .vscode
+.aider*
+.opencode.json
+PROJECT_REPORT.md
