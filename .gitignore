@@ -1,5 +1,6 @@
 .env
 .venv
+wheels/
 __pycache__/
 node_modules/
 .qodo

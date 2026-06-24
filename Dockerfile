@@ -13,8 +13,10 @@ ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 
 USER airflow
 
-# pyspark is a 317 MB sdist — needs a long timeout; separate layer so it caches independently.
-RUN pip install --no-cache-dir --timeout 600 --retries 10 pyspark==3.5.3
+# Install pyspark from a pre-built local wheel (avoids 317 MB download inside the Docker VM).
+COPY --chown=airflow:root ./wheels/pyspark-3.5.3-py2.py3-none-any.whl /tmp/
+RUN pip install --no-cache-dir /tmp/pyspark-3.5.3-py2.py3-none-any.whl && \
+    rm /tmp/pyspark-3.5.3-py2.py3-none-any.whl
 
 COPY ./requirements.txt /
-RUN pip install --no-cache-dir --timeout 180 --retries 5 -r /requirements.txt
+RUN pip install --no-cache-dir --timeout 120 -r /requirements.txt
